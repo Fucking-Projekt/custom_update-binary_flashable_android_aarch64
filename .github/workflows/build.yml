@@ -1,0 +1,46 @@
+name: Build and Release ARM64 Binaries
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu curl
+
+      - name: Manual Rust Setup
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+          source $HOME/.cargo/env
+          rustup target add aarch64-unknown-linux-musl
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Build
+        run: |
+          chmod +x build.sh
+          ./build.sh
+
+      - name: Create Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="build-$(date +'%Y%m%d-%H%M%S')"
+          gh release create "$TAG_NAME" out/update-binary out/unzip_64 \
+            --title "Release $TAG_NAME" \
+            --notes "Automated build for ARM64" \
+            --target ${{ github.sha }}
