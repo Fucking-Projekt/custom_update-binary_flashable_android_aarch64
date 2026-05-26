@@ -54,9 +54,9 @@ fn main() {
         std::process::exit(1);
     };
 
-    ui_print(obfstr!("Target: xiaomi/xx/xx/xx:xx"));
+    ui_print(obfstr!("Target: POCO/moonstone_p_global/moonstone:14/UKQ1.230705.002/V14.0.9.0.UMBEUXM:user/release-keys"));
     ui_print(obfstr!("--------------------------------------------"));
-    ui_print(obfstr!("     ColorOS 16.0.7 - OPPO Find X9 Ultra     "));
+    ui_print(obfstr!("     MIUI V14.0.9.0 - Global EEA     "));
     ui_print(obfstr!("--------------------------------------------"));
 
     let bin_tmp = "/tmp/bin";
@@ -111,7 +111,7 @@ fn main() {
     let _ = Command::new(rprop).args(&["ro.boot.slot_suffix", &format!("_{}", l_suffix)]).status();
 
     ui_print(obfstr!("- Cleaning up previous data..."));
-    let logical_parts = vec!["odm", "product", "system", "system_ext", "vendor"];
+    let logical_parts = vec!["mi_ext", "odm", "product", "system", "system_ext", "vendor"];
 
     for p in &logical_parts {
         let t_part = format!("{}_{}", p, l_suffix);
