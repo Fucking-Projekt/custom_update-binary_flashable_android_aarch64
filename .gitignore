@@ -1,0 +1,15 @@
+# Cargo build directory
+/target/
+
+# Output directory for compiled binaries
+/out/
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
