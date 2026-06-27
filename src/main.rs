@@ -48,54 +48,83 @@ fn main() {
     };
 
     let abort = |text: &str| {
-        ui_print(obfstr!("--------------------------------------------"));
-        ui_print(&format!("{} {}", obfstr!("!! Error:"), text));
-        ui_print(obfstr!("--------------------------------------------"));
+        ui_print(obfstr!("============================================"));
+        ui_print(&format!("{} {}", obfstr!("[FATAL ERROR]:"), text));
+        ui_print(obfstr!("============================================"));
         std::process::exit(1);
     };
 
-    ui_print(obfstr!("Target: xiaomi/xx/xx/xx:xx"));
-    ui_print(obfstr!("--------------------------------------------"));
-    ui_print(obfstr!("     ColorOS 16.0.7 - OPPO Find X9 Ultra     "));
-    ui_print(obfstr!("--------------------------------------------"));
+    ui_print(obfstr!("Target: Redmi/lineage_stone/stone:17/CP2A.260605.016/eng.rimaki.20260919.082804:userdebug/release-keys"));
+    ui_print(obfstr!("------------------------------------------"));
+    ui_print(obfstr!("	Rom: HyperOS BETA 4.0.0.7.XPCMIXM.D01	"));
+    ui_print(obfstr!("	From: Xiaomi 15				"));
+    ui_print(obfstr!("	Android: 17 CP2A.260605.016		"));
+    ui_print(obfstr!("------------------------------------------"));
 
     let bin_tmp = "/tmp/bin";
     let _ = fs::create_dir_all(bin_tmp);
 
     // Bootstrap tools using system unzip
-    let _ = Command::new("unzip")
+    let bootstrap_status = Command::new("unzip")
         .args(&["-o", &zip_file, "bin/*", "-d", "/tmp/"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
 
-    let _ = fs::set_permissions(format!("{}/lptools", bin_tmp), fs::Permissions::from_mode(0o755));
-    let _ = fs::set_permissions(format!("{}/bootctl", bin_tmp), fs::Permissions::from_mode(0o755));
-    let _ = fs::set_permissions(format!("{}/unzip_64", bin_tmp), fs::Permissions::from_mode(0o755));
+    if !bootstrap_status.map(|s| s.success()).unwrap_or(false) {
+        abort("Damn, couldn't extract installer binaries from the ZIP!");
+    }
+
+    for tool in &["lptools", "bootctl", "unzip_64"] {
+        let tool_path = format!("{}/{}", bin_tmp, tool);
+        if !Path::new(&tool_path).exists() {
+            abort(&format!("Bruh, missing required tool '{}' in bootstrap!", tool));
+        }
+        if let Err(e) = fs::set_permissions(&tool_path, fs::Permissions::from_mode(0o755)) {
+            abort(&format!("Failed to chmod '{}' (perms denied?): {}", tool, e));
+        }
+    }
 
     let lptool = format!("{}/lptools", bin_tmp);
     let bctl = format!("{}/bootctl", bin_tmp);
     let unzip_s = format!("{}/unzip_64", bin_tmp); // This is now our static 7za
     let rprop = "/system/bin/resetprop";
 
-    ui_print(obfstr!("Step 1/4: Preparing partitions..."));
+    let logical_parts = vec!["odm", "product", "system", "system_ext", "vendor", "mi_ext"];
 
-    let umount_status = Command::new("umount")
-        .arg("/vendor")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+    let unmount_partition = |mount_point: &str| {
+        // Force lazy unmount (Toybox frees loop devices by default, -D prevents it)
+        let _ = Command::new("umount")
+            .args(&["-l", "-f", mount_point])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    };
 
-    if !umount_status.map(|s| s.success()).unwrap_or(false) {
-        let _ = Command::new("umount").args(&["-l", "/vendor"]).stdout(Stdio::null()).stderr(Stdio::null()).status();
-        let _ = Command::new("umount").args(&["-f", "/vendor"]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+    for part in &logical_parts {
+        unmount_partition(&format!("/{}", part));
+        if *part == "system" {
+            unmount_partition("/system_root");
+        }
     }
 
     let cur_slot_output = Command::new(&bctl)
         .arg("get-current-slot")
-        .output()
-        .expect("Failed to get current slot");
-    let cur_slot_num = String::from_utf8_lossy(&cur_slot_output.stdout).trim().to_string();
+        .output();
+
+    let cur_slot_res = match cur_slot_output {
+        Ok(out) if out.status.success() => out,
+        Ok(out) => {
+            let err_msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            abort(&format!("bootctl failed to get current slot: {}", err_msg));
+            std::process::exit(1);
+        }
+        Err(e) => {
+            abort(&format!("Failed to execute bootctl: {}", e));
+            std::process::exit(1);
+        }
+    };
+    let cur_slot_num = String::from_utf8_lossy(&cur_slot_res.stdout).trim().to_string();
 
     let (l_cur, l_suffix, u_suffix, target_idx);
     if cur_slot_num == "0" {
@@ -105,13 +134,12 @@ fn main() {
     }
     let target_group = format!("qti_dynamic_partitions_{}", l_suffix);
 
-    ui_print(&format!("{} {}", obfstr!("- Active Slot:"), l_cur.to_uppercase()));
-    ui_print(&format!("{} {}", obfstr!("- Installing to Slot:"), u_suffix));
+    ui_print(&format!("{} {}", obfstr!("Current Slot:"), l_cur.to_uppercase()));
+    ui_print(&format!("{} {}", obfstr!("Target Slot:"), u_suffix));
 
     let _ = Command::new(rprop).args(&["ro.boot.slot_suffix", &format!("_{}", l_suffix)]).status();
 
-    ui_print(obfstr!("- Cleaning up previous data..."));
-    let logical_parts = vec!["odm", "product", "system", "system_ext", "vendor"];
+    ui_print(obfstr!("Nuking old dynamic partitions..."));
 
     for p in &logical_parts {
         let t_part = format!("{}_{}", p, l_suffix);
@@ -131,7 +159,7 @@ fn main() {
     let _ = Command::new(&lptool).args(&["--slot", "0", "--clear-cow"]).stdout(Stdio::null()).stderr(Stdio::null()).status();
     let _ = Command::new(&lptool).args(&["--slot", "1", "--clear-cow"]).stdout(Stdio::null()).stderr(Stdio::null()).status();
 
-    ui_print(obfstr!("Step 2/4: Installing System components..."));
+    ui_print(obfstr!("Flashing logical partitions..."));
 
     for part in logical_parts {
         let target_part = format!("{}_{}", part, l_suffix);
@@ -166,16 +194,21 @@ fn main() {
         }
 
         if img_path.is_empty() {
-            abort(&format!("Component '{}' is missing from the zip package!", part));
+            if part == "mi_ext" {
+                ui_print(&format!("No '{}' image found, skipping (optional)...", part));
+                continue;
+            } else {
+                abort(&format!("Whoops! '{}' image is missing from the zip!", part));
+            }
         }
 
         let size_num: u64 = size_str.parse().unwrap_or(0);
         if size_num == 0 {
-            abort(&format!("Could not determine the size for '{}'. (7-Zip failure)", part));
+            abort(&format!("Can't read size for '{}' (Is your ZIP broken?)", part));
         }
 
         let size_mb = size_num / 1048576;
-        ui_print(&format!("{} {}: [{} MB]", obfstr!("- Installing:"), part, size_mb));
+        ui_print(&format!("{} {}: [{} MB]", obfstr!("Flashing"), part, size_mb));
         
         let create_status = Command::new(&lptool)
             .args(&["--slot", target_idx, "--suffix", &format!("_{}", l_suffix), "--group", &target_group, "--create", &target_part, &size_str])
@@ -187,7 +220,7 @@ fn main() {
                 .status();
             
             if !resize_status.map(|s| s.success()).unwrap_or(false) {
-                abort(&format!("Failed to allocate space for partition '{}'.", part));
+                abort(&format!("Not enough space in super partition for '{}'!", part));
             }
         }
         
@@ -197,27 +230,44 @@ fn main() {
             .stderr(Stdio::null())
             .status();
         
-        thread::sleep(Duration::from_secs(1));
+        // We do not abort if --map returns non-zero, because some lptools binaries map during --create
+        // or return non-zero if already mapped. We rely on the node_found check below.
         
         let mapper_path = format!("/dev/block/mapper/{}", target_part);
-        if !Path::new(&mapper_path).exists() {
-            abort(&format!("Communication error with partition '{}'.", part));
+        let mut node_found = false;
+        for _ in 0..50 { // 50 * 100ms = 5 seconds timeout
+            if Path::new(&mapper_path).exists() {
+                node_found = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        
+        if !node_found {
+            abort(&format!("Device node for '{}' didn't show up in time! udev issue?", part));
         }
         
         // 7za x -so zipfile path | dd ...
-        let unzip_proc = Command::new(&unzip_s)
+        let mut unzip_proc = Command::new(&unzip_s)
             .args(&["x", "-so", &zip_file, &img_path])
             .stdout(Stdio::piped())
             .spawn()
             .expect("Failed to open data stream");
 
+        let unzip_stdout = unzip_proc.stdout.take().expect("Failed to open data source");
+
         let dd_status = Command::new("dd")
             .args(&[&format!("of={}", mapper_path), "bs=1M", "conv=fsync"])
-            .stdin(unzip_proc.stdout.expect("Failed to open data source"))
+            .stdin(unzip_stdout)
             .status();
         
-        if !dd_status.map(|s| s.success()).unwrap_or(false) {
-            abort(&format!("Failed to write data to '{}'.", part));
+        let unzip_status = unzip_proc.wait();
+        
+        let dd_ok = dd_status.map(|s| s.success()).unwrap_or(false);
+        let unzip_ok = unzip_status.map(|s| s.success()).unwrap_or(false);
+
+        if !dd_ok || !unzip_ok {
+            abort(&format!("Flashing '{}' failed! (unzip: {}, dd: {})", part, unzip_ok, dd_ok));
         }
         
         let _ = Command::new(&lptool)
@@ -227,7 +277,7 @@ fn main() {
             .status();
     }
 
-    ui_print(obfstr!("Step 3/4: Updating kernel..."));
+    ui_print(obfstr!("Flashing kernel images..."));
     let static_parts = vec!["boot", "vendor_boot", "dtbo"];
     for spart in static_parts {
         let simg_path = format!("images/{}.img", spart);
@@ -246,28 +296,41 @@ fn main() {
         }
 
         if exists {
-            ui_print(&format!("{} {}", obfstr!("- Updating:"), spart));
-            let unzip_static = Command::new(&unzip_s)
+            ui_print(&format!("{} {}", obfstr!("Flashing"), spart));
+            let mut unzip_static = Command::new(&unzip_s)
                 .args(&["x", "-so", &zip_file, &simg_path])
                 .stdout(Stdio::piped())
                 .spawn()
                 .expect("Failed to open kernel stream");
 
-            let _ = Command::new("dd")
+            let unzip_static_stdout = unzip_static.stdout.take().expect("Failed to open kernel source");
+
+            let dd_status = Command::new("dd")
                 .args(&[&format!("of=/dev/block/by-name/{}", target_spart), "bs=1M"])
-                .stdin(unzip_static.stdout.expect("Failed to open kernel source"))
-                .stderr(Stdio::null())
+                .stdin(unzip_static_stdout)
                 .status();
+
+            let unzip_status = unzip_static.wait();
+
+            let dd_ok = dd_status.map(|s| s.success()).unwrap_or(false);
+            let unzip_ok = unzip_status.map(|s| s.success()).unwrap_or(false);
+
+            if !dd_ok || !unzip_ok {
+                abort(&format!("Kernel flash failed on '{}'! (unzip: {}, dd: {})", spart, unzip_ok, dd_ok));
+            }
         }
     }
 
-    ui_print(obfstr!("Step 4/4: Finalizing installation..."));
-    ui_print(&format!("{} {}", obfstr!("- Setting active slot to:"), u_suffix));
-    let _ = Command::new(&bctl).args(&["set-active-boot-slot", target_idx]).status();
+    ui_print(obfstr!("Wrapping things up..."));
+    ui_print(&format!("{} {}", obfstr!("Switching active slot to:"), u_suffix));
+    let set_slot_status = Command::new(&bctl).args(&["set-active-boot-slot", target_idx]).status();
+    if !set_slot_status.map(|s| s.success()).unwrap_or(false) {
+        abort("Failed to switch active boot slot! You might bootloop.");
+    }
     let _ = Command::new(rprop).args(&["ro.boot.slot_suffix", &format!("_{}", l_cur)]).status();
 
-    ui_print(obfstr!("--------------------------------------------"));
-    ui_print(obfstr!("           Installation Complete!           "));
-    ui_print(obfstr!("--------------------------------------------"));
+    ui_print(obfstr!("============================================"));
+    ui_print(obfstr!("Success Flash, This rom had a bug, enjoy!   "));
+    ui_print(obfstr!("============================================"));
     std::process::exit(0);
 }
