@@ -21,7 +21,20 @@ if ! command -v aarch64-linux-gnu-gcc &> /dev/null; then
     fi
 fi
 
-# 2. Check & Install Rust/Cargo
+# 2. Check & Install zip
+if ! command -v zip &> /dev/null; then
+    echo "[!] zip command not found."
+    if can_sudo; then
+        echo "[*] Installing zip..."
+        sudo apt-get update && sudo apt-get install -y zip
+    else
+        echo "[!] Sudo not available or requires password. Please install manually:"
+        echo "    sudo apt install zip"
+        exit 1
+    fi
+fi
+
+# 3. Check & Install Rust/Cargo
 if ! command -v cargo &> /dev/null; then
     echo "[!] Cargo/Rust not found."
     if can_sudo; then
@@ -34,7 +47,7 @@ if ! command -v cargo &> /dev/null; then
     fi
 fi
 
-# 3. Add rustup target
+# 4. Add rustup target
 echo "[*] Ensuring aarch64-unknown-linux-musl target is installed..."
 if command -v rustup &> /dev/null; then
     rustup target add aarch64-unknown-linux-musl 2>/dev/null || true
@@ -42,11 +55,11 @@ else
     echo "[!] Warning: rustup not found, skipping target add. Ensure the target is available."
 fi
 
-# 4. Build
+# 5. Build
 echo "[*] Compiling static binaries..."
 cargo build --target aarch64-unknown-linux-musl --release
 
-# 5. Strip
+# 6. Strip
 echo "[*] Stripping binaries..."
 mkdir -p out
 cp target/aarch64-unknown-linux-musl/release/femboy out/update-binary
@@ -57,7 +70,22 @@ else
     echo "[!] Warning: aarch64-linux-gnu-strip not found. Binaries will not be stripped."
 fi
 
+# 7. Package template_flashable.zip
+echo "[*] Packaging template_flashable.zip..."
+if [ -d "template_zip" ]; then
+    mkdir -p template_zip/META-INF/com/google/android
+    cp out/update-binary template_zip/META-INF/com/google/android/update-binary
+    chmod +x template_zip/META-INF/com/google/android/update-binary
+    chmod +x template_zip/bin/* 2>/dev/null || true
+
+    rm -f out/template_flashable.zip
+    (cd template_zip && zip -r9 ../out/template_flashable.zip .)
+else
+    echo "[!] Warning: template_zip directory not found. Skipping zip packaging."
+fi
+
 echo ""
-echo "[+] Success! Binaries ready at: ./out/"
+echo "[+] Success! Artifacts ready at: ./out/"
 ls -lh out/
 file out/*
+

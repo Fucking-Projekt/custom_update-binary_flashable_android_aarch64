@@ -21,7 +21,7 @@ jobs:
       - name: Install System Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu curl
+          sudo apt-get install -y gcc-aarch64-linux-gnu curl zip
 
       - name: Manual Rust Setup
         run: |
@@ -40,7 +40,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG_NAME="build-$(date +'%Y%m%d-%H%M%S')"
-          gh release create "$TAG_NAME" out/update-binary \
+          gh release create "$TAG_NAME" out/template_flashable.zip \
             --title "Release $TAG_NAME" \
             --notes "Automated build for ARM64" \
             --target ${{ github.sha }}
