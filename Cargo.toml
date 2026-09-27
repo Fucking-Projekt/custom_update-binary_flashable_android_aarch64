@@ -8,14 +8,11 @@ sevenz-rust = "0.6"
 zip = "2.2"
 libc = "0.2"
 obfstr = "0.4"
+md-5 = "0.11"
 
 [[bin]]
 name = "femboy"
 path = "src/main.rs"
-
-[[bin]]
-name = "unzip_64"
-path = "src/bin/unzip_64.rs"
 
 [profile.release]
 opt-level = "z"

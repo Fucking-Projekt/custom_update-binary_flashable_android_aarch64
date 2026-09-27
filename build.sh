@@ -50,11 +50,9 @@ cargo build --target aarch64-unknown-linux-musl --release
 echo "[*] Stripping binaries..."
 mkdir -p out
 cp target/aarch64-unknown-linux-musl/release/femboy out/update-binary
-cp target/aarch64-unknown-linux-musl/release/unzip_64 out/unzip_64
 
 if command -v aarch64-linux-gnu-strip &> /dev/null; then
     aarch64-linux-gnu-strip out/update-binary
-    aarch64-linux-gnu-strip out/unzip_64
 else
     echo "[!] Warning: aarch64-linux-gnu-strip not found. Binaries will not be stripped."
 fi

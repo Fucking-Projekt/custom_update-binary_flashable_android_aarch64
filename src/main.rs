@@ -1,12 +1,13 @@
 use std::env;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::process::{Command, Stdio};
 use std::path::Path;
 use std::thread;
 use std::time::Duration;
 use obfstr::obfstr;
+use md5::{Digest, Md5};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -60,6 +61,67 @@ fn main() {
     ui_print(obfstr!("	From: Xiaomi 15				"));
     ui_print(obfstr!("	Android: 17 CP2A.260605.016		"));
     ui_print(obfstr!("------------------------------------------"));
+
+    // Verify MD5 integrity from ZIP filename
+    let file_name = Path::new(&zip_file)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+
+    let stem = if file_name.to_lowercase().ends_with(".zip") {
+        &file_name[..file_name.len() - 4]
+    } else {
+        abort("Installation package must be a .zip file!");
+        ""
+    };
+
+    let expected_hash = stem.rsplit('-').next().unwrap_or("");
+    if expected_hash.len() != 10 || !expected_hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        abort(&format!(
+            "Invalid ZIP name '{}'! Missing 10-character MD5 hash suffix (e.g. filename-<10-char-md5>.zip).",
+            file_name
+        ));
+    }
+
+    ui_print(obfstr!("Verifying ZIP integrity (anti-corruption)..."));
+    ui_print(&format!("{} {}", obfstr!("Expected MD5 (10-char):"), expected_hash));
+
+    let mut hasher = Md5::new();
+    let zip_handle = match fs::File::open(&zip_file) {
+        Ok(f) => f,
+        Err(e) => {
+            abort(&format!("Failed to open ZIP file '{}': {}", zip_file, e));
+            return;
+        }
+    };
+
+    let mut reader = std::io::BufReader::with_capacity(2 * 1024 * 1024, zip_handle);
+    let mut buffer = [0u8; 1024 * 1024];
+
+    loop {
+        match reader.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(n) => hasher.update(&buffer[..n]),
+            Err(e) => {
+                abort(&format!("Error reading ZIP file during MD5 check: {}", e));
+            }
+        }
+    }
+
+    let calculated_digest = hasher.finalize();
+    let calculated_full_md5: String = calculated_digest.iter().map(|b| format!("{:02x}", b)).collect();
+    let calculated_hash = &calculated_full_md5[..10];
+
+    if !calculated_hash.eq_ignore_ascii_case(expected_hash) {
+        abort(&format!(
+            "MD5 Mismatch! ZIP is corrupted!\nExpected: {}\nGot:      {} (Full: {})",
+            expected_hash, calculated_hash, calculated_full_md5
+        ));
+    }
+
+    ui_print(&format!("{} {}", obfstr!("MD5 Check OK:"), calculated_hash));
+    ui_print(obfstr!("------------------------------------------"));
+
 
     let bin_tmp = "/tmp/bin";
     let _ = fs::create_dir_all(bin_tmp);
